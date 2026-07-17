@@ -1,0 +1,127 @@
+-- A two-leg repo: open leg (bond out, cash in), close leg (cash + minute-priced
+-- interest back, bond returned), with a pre-commit eligibility gate and a haircut.
+--
+-- The two properties this module demonstrates:
+--   1. The close leg is an enforceable contract state from the moment the repo
+--      opens. Same-day (or same-hour) unwind is guaranteed by construction,
+--      which is exactly what makes intraday repo tradable at all.
+--   2. Policy runs BEFORE commit: an ineligible ISIN or a breached haircut
+--      aborts the whole transaction. There is no failed trade to clean up,
+--      because the trade never existed.
+module Repo where
+
+import Assets
+
+-- The repurchase formula exists exactly once, and both the contract and the
+-- tests import it. Decimal arithmetic rounds at every operation, so two
+-- independently coded versions of "the same" formula can disagree by
+-- fractions of a cent on large notionals: a reconciliation problem in
+-- miniature. One shared definition means there is no second book to reconcile.
+repurchasePrice : Decimal -> Decimal -> Int -> Decimal
+repurchasePrice principal annualRate termMinutes =
+  principal + principal * annualRate * (intToDecimal termMinutes / 525600.0)
+
+-- Reference data owned by a risk desk: which collateral is eligible, and the
+-- haircut floor. The pre-commit gate reads this at acceptance time.
+template EligibilityCriteria
+  with
+    riskDesk : Party
+    eligibleIsins : [Text]
+    minHaircutPct : Decimal
+    users : [Party]
+  where
+    signatory riskDesk
+    observer users
+
+template RepoProposal
+  with
+    collateralProvider : Party  -- gives the bond, takes the cash
+    cashProvider : Party        -- lends the cash against collateral
+    riskDesk : Party
+    isin : Text
+    nominal : Decimal
+    cashAmount : Decimal
+    currency : Text
+    annualRate : Decimal        -- e.g. 0.045 = 4.5% p.a.
+    termMinutes : Int           -- interest is priced to the minute
+    haircutPct : Decimal        -- e.g. 0.02 = 2%
+  where
+    signatory collateralProvider
+    observer cashProvider, riskDesk
+
+    choice RepoAccept : ContractId RepoAgreement
+      with
+        bondCid : ContractId Bond
+        cashCid : ContractId Cash
+        eligibilityCid : ContractId EligibilityCriteria
+      controller cashProvider
+      do
+        -- PRE-COMMIT POLICY GATE ------------------------------------------
+        crit <- fetch eligibilityCid
+        assertMsg "eligibility list must come from the agreed risk desk"
+          (crit.riskDesk == riskDesk)
+        assertMsg "collateral ISIN not eligible" (isin `elem` crit.eligibleIsins)
+        assertMsg "haircut below risk-desk floor" (haircutPct >= crit.minHaircutPct)
+        -- ASSET CHECKS ----------------------------------------------------
+        bond <- fetch bondCid
+        cash <- fetch cashCid
+        assertMsg "bond must be owned by collateral provider"
+          (bond.owner == collateralProvider && bond.isin == isin && bond.faceValue == nominal)
+        assertMsg "cash must be owned by cash provider"
+          (cash.owner == cashProvider && cash.amount == cashAmount && cash.currency == currency)
+        -- HAIRCUT: lend only against discounted collateral value ----------
+        assertMsg "cash amount exceeds collateral value less haircut"
+          (cashAmount <= bond.faceValue * (1.0 - haircutPct))
+        -- OPEN LEG: one atomic transaction ---------------------------------
+        archive bondCid
+        archive cashCid
+        -- The collateral giver keeps sight of his pledged bond: economically
+        -- correct (he monitors his collateral) and required for the close leg.
+        pledgedBond <- create bond with
+          owner = cashProvider
+          disclosedTo = [collateralProvider]
+        _borrowedCash <- create cash with owner = collateralProvider
+        create RepoAgreement with
+          collateralProvider; cashProvider; pledgedBondCid = pledgedBond
+          isin; cashAmount; currency; annualRate; termMinutes
+
+template RepoAgreement
+  with
+    collateralProvider : Party
+    cashProvider : Party
+    pledgedBondCid : ContractId Bond
+    isin : Text
+    cashAmount : Decimal
+    currency : Text
+    annualRate : Decimal
+    termMinutes : Int
+  where
+    signatory collateralProvider, cashProvider
+
+    -- CLOSE LEG: principal plus minute-priced interest against the bond.
+    choice RepoClose : (ContractId Bond, ContractId Cash)
+      with
+        repaymentCashCid : ContractId Cash
+      controller collateralProvider
+      do
+        let owed = repurchasePrice cashAmount annualRate termMinutes
+        repay <- fetch repaymentCashCid
+        assertMsg "repayment must be owned by collateral provider"
+          (repay.owner == collateralProvider)
+        assertMsg "repurchase price not met (principal + minute-priced interest)"
+          (repay.amount >= owed && repay.currency == currency)
+        bond <- fetch pledgedBondCid
+        archive repaymentCashCid
+        archive pledgedBondCid
+        cashBack <- create repay with owner = cashProvider
+        bondBack <- create bond with owner = collateralProvider
+        pure (bondBack, cashBack)
+
+    -- Simplified default handling: the cash provider already holds the
+    -- collateral (transferred at the open leg), so enforcement just closes
+    -- the agreement. Real maturity/time enforcement is out of scope here
+    -- (see README).
+    choice RepoEnforce : ContractId Bond
+      controller cashProvider
+      do
+        pure pledgedBondCid

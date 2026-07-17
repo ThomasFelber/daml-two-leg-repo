@@ -1,0 +1,35 @@
+-- Minimal asset templates for the lab.
+-- Simplification (deliberate, see README): the owner is the sole signatory,
+-- so issuance controls are out of scope. In production the issuer/registrar
+-- would be a signatory and transfers would run through issuer-authorized
+-- workflows (or a token standard). Here we study settlement composition,
+-- not issuance.
+module Assets where
+
+-- Note the disclosedTo field: Daml is need-to-know by default. A counterparty
+-- cannot even fetch an asset it has not been shown. Settlement therefore
+-- requires EXPLICIT disclosure, which is the privacy model working as
+-- intended, not an inconvenience.
+template Cash
+  with
+    issuer : Party
+    owner : Party
+    currency : Text
+    amount : Decimal
+    disclosedTo : [Party]
+  where
+    signatory owner
+    observer issuer, disclosedTo
+    ensure amount > 0.0
+
+template Bond
+  with
+    registrar : Party
+    owner : Party
+    isin : Text
+    faceValue : Decimal
+    disclosedTo : [Party]
+  where
+    signatory owner
+    observer registrar, disclosedTo
+    ensure faceValue > 0.0

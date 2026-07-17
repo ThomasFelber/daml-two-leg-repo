@@ -1,0 +1,35 @@
+-- Atomic delivery-versus-payment via propose-accept.
+-- The interesting property: settlement is ONE transaction. Both legs move,
+-- or neither does. There is no half-settled state to reconcile afterwards.
+module Dvp where
+
+import Assets
+
+template DvpProposal
+  with
+    buyer : Party
+    seller : Party
+    isin : Text
+    price : Decimal
+    currency : Text
+  where
+    signatory buyer
+    observer seller
+
+    choice DvpAccept : (ContractId Cash, ContractId Bond)
+      with
+        cashCid : ContractId Cash
+        bondCid : ContractId Bond
+      controller seller
+      do
+        cash <- fetch cashCid
+        bond <- fetch bondCid
+        assertMsg "cash must be owned by buyer" (cash.owner == buyer)
+        assertMsg "cash must match agreed price" (cash.amount == price && cash.currency == currency)
+        assertMsg "bond must be owned by seller" (bond.owner == seller)
+        assertMsg "bond must match agreed ISIN" (bond.isin == isin)
+        archive cashCid
+        archive bondCid
+        sellerCash <- create cash with owner = seller
+        buyerBond <- create bond with owner = buyer
+        pure (sellerCash, buyerBond)

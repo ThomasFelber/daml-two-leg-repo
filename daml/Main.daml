@@ -1,0 +1,151 @@
+-- Test scripts: a happy-path DvP, a happy-path two-leg repo with minute-priced
+-- interest, and two pre-commit rejections (ineligible ISIN, breached haircut).
+-- Run with `daml test` or interactively via `daml start`.
+module Main where
+
+import Daml.Script
+import DA.Assert ((===))
+import Assets
+import Dvp
+import Repo
+
+data Parties = Parties with
+  dealer : Party      -- collateral provider / bond seller
+  mmf : Party         -- cash provider / bond buyer
+  riskDesk : Party
+
+allocateParties : Script Parties
+allocateParties = do
+  dealer <- allocateParty "Dealer"
+  mmf <- allocateParty "MMF"
+  riskDesk <- allocateParty "RiskDesk"
+  pure Parties with dealer; mmf; riskDesk
+
+-- Atomic DvP: bond against cash in one transaction. Note the explicit
+-- disclosure: the seller can only settle against cash he has been shown.
+testDvp : Script ()
+testDvp = do
+  Parties{..} <- allocateParties
+  cashCid <- submit mmf do
+    createCmd Cash with
+      issuer = riskDesk; owner = mmf; currency = "USD"; amount = 98.0
+      disclosedTo = [dealer]
+  bondCid <- submit dealer do
+    createCmd Bond with
+      registrar = riskDesk; owner = dealer; isin = "US-T-2030"; faceValue = 100.0
+      disclosedTo = [mmf]
+  propCid <- submit mmf do
+    createCmd DvpProposal with
+      buyer = mmf; seller = dealer; isin = "US-T-2030"; price = 98.0; currency = "USD"
+  (sellerCashCid, buyerBondCid) <- submit dealer do
+    exerciseCmd propCid DvpAccept with cashCid; bondCid
+  Some sellerCash <- queryContractId dealer sellerCashCid
+  Some buyerBond <- queryContractId mmf buyerBondCid
+  sellerCash.owner === dealer
+  buyerBond.owner === mmf
+  debug "DvP settled atomically: both legs moved in one transaction."
+
+-- Two-leg repo: open leg, then close leg with interest priced to the minute.
+testRepoHappyPath : Script ()
+testRepoHappyPath = do
+  Parties{..} <- allocateParties
+  eligibilityCid <- submit riskDesk do
+    createCmd EligibilityCriteria with
+      riskDesk; eligibleIsins = ["US-T-2030", "DE-BUND-2032"]
+      minHaircutPct = 0.02; users = [dealer, mmf]
+  bondCid <- submit dealer do
+    createCmd Bond with
+      registrar = riskDesk; owner = dealer; isin = "US-T-2030"; faceValue = 100000000.0
+      disclosedTo = [mmf]
+  cashCid <- submit mmf do
+    createCmd Cash with
+      issuer = riskDesk; owner = mmf; currency = "USD"; amount = 98000000.0
+      disclosedTo = []
+  propCid <- submit dealer do
+    createCmd RepoProposal with
+      collateralProvider = dealer; cashProvider = mmf; riskDesk
+      isin = "US-T-2030"; nominal = 100000000.0
+      cashAmount = 98000000.0; currency = "USD"
+      annualRate = 0.045; termMinutes = 240   -- a 4-hour intraday repo
+      haircutPct = 0.02
+  agreementCid <- submit mmf do
+    exerciseCmd propCid RepoAccept with bondCid; cashCid; eligibilityCid
+  -- Interest for 4 hours at 4.5% p.a. on 98m is about 2,013.70. We use the
+  -- SHARED formula from Repo.daml: one definition, no second book, no
+  -- rounding disagreement (Decimal rounds per operation, so independently
+  -- coded formulas can differ by fractions of a cent on large notionals).
+  let repurchase = repurchasePrice 98000000.0 0.045 240
+  repayCid <- submit dealer do
+    createCmd Cash with
+      issuer = riskDesk; owner = dealer; currency = "USD"; amount = repurchase
+      disclosedTo = []
+  (bondBackCid, cashBackCid) <- submit dealer do
+    exerciseCmd agreementCid RepoClose with repaymentCashCid = repayCid
+  Some bondBack <- queryContractId dealer bondBackCid
+  Some cashBack <- queryContractId mmf cashBackCid
+  bondBack.owner === dealer
+  cashBack.owner === mmf
+  debug "Repo closed: collateral returned, cash provider earned minute-priced interest."
+
+-- PRE-COMMIT GATE: ineligible collateral aborts before anything commits.
+testRepoRejectsIneligibleCollateral : Script ()
+testRepoRejectsIneligibleCollateral = do
+  Parties{..} <- allocateParties
+  eligibilityCid <- submit riskDesk do
+    createCmd EligibilityCriteria with
+      riskDesk; eligibleIsins = ["US-T-2030"]
+      minHaircutPct = 0.02; users = [dealer, mmf]
+  bondCid <- submit dealer do
+    createCmd Bond with
+      registrar = riskDesk; owner = dealer; isin = "XS-TOKENIZED-RE-SPV"; faceValue = 100000000.0
+      disclosedTo = [mmf]
+  cashCid <- submit mmf do
+    createCmd Cash with
+      issuer = riskDesk; owner = mmf; currency = "USD"; amount = 98000000.0
+      disclosedTo = []
+  propCid <- submit dealer do
+    createCmd RepoProposal with
+      collateralProvider = dealer; cashProvider = mmf; riskDesk
+      isin = "XS-TOKENIZED-RE-SPV"; nominal = 100000000.0
+      cashAmount = 98000000.0; currency = "USD"
+      annualRate = 0.045; termMinutes = 240
+      haircutPct = 0.02
+  submitMustFail mmf do
+    exerciseCmd propCid RepoAccept with bondCid; cashCid; eligibilityCid
+  debug "Ineligible collateral rejected pre-commit: no failed trade to clean up."
+
+-- PRE-COMMIT GATE: breached haircut aborts the open leg.
+testRepoRejectsBreachedHaircut : Script ()
+testRepoRejectsBreachedHaircut = do
+  Parties{..} <- allocateParties
+  eligibilityCid <- submit riskDesk do
+    createCmd EligibilityCriteria with
+      riskDesk; eligibleIsins = ["US-T-2030"]
+      minHaircutPct = 0.02; users = [dealer, mmf]
+  bondCid <- submit dealer do
+    createCmd Bond with
+      registrar = riskDesk; owner = dealer; isin = "US-T-2030"; faceValue = 100000000.0
+      disclosedTo = [mmf]
+  -- Asking for 99.5m against 100m nominal at a 2% haircut: only 98m is lendable.
+  cashCid <- submit mmf do
+    createCmd Cash with
+      issuer = riskDesk; owner = mmf; currency = "USD"; amount = 99500000.0
+      disclosedTo = []
+  propCid <- submit dealer do
+    createCmd RepoProposal with
+      collateralProvider = dealer; cashProvider = mmf; riskDesk
+      isin = "US-T-2030"; nominal = 100000000.0
+      cashAmount = 99500000.0; currency = "USD"
+      annualRate = 0.045; termMinutes = 240
+      haircutPct = 0.02
+  submitMustFail mmf do
+    exerciseCmd propCid RepoAccept with bondCid; cashCid; eligibilityCid
+  debug "Haircut floor enforced pre-commit."
+
+-- init-script for `daml start`
+setup : Script ()
+setup = do
+  testDvp
+  testRepoHappyPath
+  testRepoRejectsIneligibleCollateral
+  testRepoRejectsBreachedHaircut
