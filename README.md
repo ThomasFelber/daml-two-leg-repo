@@ -58,13 +58,18 @@ Log in as one user at a time — `dealer`, `mmf`, `riskdesk` — and open the
 *Contracts* view. After `setup` the ledger holds 14 active contracts, and
 each login sees a different subset:
 
-- **dealer** sees 10: its bonds and cash, the two open repo proposals, and
-  the risk desk's eligibility lists — but not MMF's undisclosed cash.
-- **mmf** sees 11: its own cash and bonds, plus the same proposals and
+- **Dealer** (login `dealer`) — the collateral provider, think a bank's
+  repo desk — sees 10: its bonds and cash, the two open repo proposals,
+  and the risk desk's eligibility lists — but not the fund's undisclosed
+  cash.
+- **Money Market Fund** (login `mmf`) — the cash provider and DvP bond
+  buyer — sees 11: its own cash and bonds, plus the same proposals and
   criteria — but not the dealer's other holdings.
-- **riskdesk** sees all 14 — *not* because it is an admin, but because in
-  this lab it has a role in every contract: signatory on the criteria,
-  issuer/registrar observer on every asset, gate on every proposal.
+- **Risk Desk** (login `riskdesk`) — three roles in one party: policy
+  gate, cash issuer, bond registrar — sees all 14. *Not* because it is an
+  admin, but because each of those roles is written into the contracts:
+  signatory on the criteria, issuer/registrar observer on every asset,
+  gate on every proposal.
 
 That last line is the point: there is no "view everything" flag anywhere.
 Visibility follows contractual role — change the roles and the view

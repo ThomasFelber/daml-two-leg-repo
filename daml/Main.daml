@@ -10,9 +10,9 @@ import Dvp
 import Repo
 
 data Parties = Parties with
-  dealer : Party      -- collateral provider / bond seller
-  mmf : Party         -- cash provider / bond buyer
-  riskDesk : Party
+  dealer : Party      -- Dealer: collateral provider / bond seller
+  mmf : Party         -- Money Market Fund: cash provider / bond buyer
+  riskDesk : Party    -- Risk Desk: policy gate; in this lab also cash issuer and bond registrar
 
 allocateParties : Script Parties
 allocateParties = do
