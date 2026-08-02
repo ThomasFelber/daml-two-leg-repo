@@ -68,13 +68,49 @@ scoped, explicit disclosure (observer roles per workflow, time-boxed if
 needed), so support sees the contract in question, not the book. The ability
 to say no starts with understanding why the design is what it is.
 
+## What a second pass found
+
+Three things I did not see the first time. They are not simplifications, they
+are holes, and the reason they are here rather than quietly fixed is that each
+one is more instructive than the code that hides it.
+
+1. **The close leg keeps the overpayment.** `RepoClose` asserts that the
+   repayment is *at least* the repurchase price, then transfers the whole cash
+   contract to the cash provider. Pay 1,000,000 against a 950,000 obligation
+   and the excess is simply gone. The honest fix is either an equality
+   assertion or a split with change returned, and choosing between those is a
+   product decision, not a technical one: equality demands that the payer
+   compute the minute-priced interest exactly as the contract does, which
+   pushes the rounding problem out to every client.
+
+2. **The pledged bond can be pulled out from under the close leg.** `Bond` has
+   the owner as sole signatory and no choices, so after the open leg the cash
+   provider can archive it unilaterally. `RepoClose` then fails at `fetch`, and
+   the collateral provider has lost the bond with the cash still outstanding.
+   This is the same simplification listed below, followed one step further:
+   sole-signatory ownership does not just skip issuance control, it makes
+   rehypothecation structurally possible. Real collateral needs the holding to
+   be jointly controlled for the life of the repo.
+
+3. **The default remedy is unconditional.** `RepoEnforce` carries no time
+   assertion, so the cash provider can enforce one second after opening and
+   keep the collateral. "No maturity enforcement" understates it: the remedy
+   is not merely untimed, it is available immediately.
+
+The related design smell, worth stating plainly: `RepoAgreement` stores
+`pledgedBondCid` in its payload. A contract ID in a contract goes stale as soon
+as anything else archives and recreates the asset. It survives here only
+because nothing else can touch that bond, which is precisely the assumption
+finding 2 breaks.
+
 ## Deliberate simplifications
 
 Honesty section: this is a lab, not a product.
 
 - The asset owner is the sole signatory, so issuance control is out of scope;
   in production the issuer or registrar is a signatory and transfers run
-  through issuer-authorized workflows or a token standard.
+  through issuer-authorized workflows or a token standard. See finding 2 above
+  for where that assumption bites.
 - No time-based maturity enforcement on the repo; `RepoEnforce` is a stub for
   default handling. Real term logic needs ledger time assertions and grace
   periods.
