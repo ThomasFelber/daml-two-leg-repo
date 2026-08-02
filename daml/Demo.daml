@@ -1,0 +1,50 @@
+-- Demo seed for the UI (NOT part of the proof/tests). Allocates one clean set
+-- of parties and one accept-ready repo proposal, so a browser UI can show
+-- holdings per party and drive Propose -> Accept -> Close interactively.
+module Demo where
+
+import Daml.Script
+import Assets
+import Repo
+
+demoInit : Script ()
+demoInit = do
+  dealer   <- allocateParty "Dealer"
+  mmf      <- allocateParty "MMF"
+  riskDesk <- allocateParty "RiskDesk"
+
+  -- Reference data owned by the risk desk.
+  _elig <- submit riskDesk do
+    createCmd EligibilityCriteria with
+      riskDesk
+      eligibleIsins = ["US-T-2030", "DE-BUND-2032"]
+      minHaircutPct = 0.02
+      users = [dealer, mmf]
+
+  -- Dealer holds the collateral bond; disclosed to the MMF so it can settle.
+  _bond <- submit dealer do
+    createCmd Bond with
+      registrar = riskDesk; owner = dealer
+      isin = "US-T-2030"; faceValue = 100000000.0
+      disclosedTo = [mmf]
+
+  -- MMF holds the cash; disclosed to the dealer.
+  _cash <- submit mmf do
+    createCmd Cash with
+      issuer = riskDesk; owner = mmf
+      currency = "USD"; amount = 98000000.0
+      disclosedTo = [dealer]
+
+  -- An OPEN proposal, ready to be accepted from the UI (98m against 100m at 2%).
+  _prop <- submit dealer do
+    createCmd RepoProposal with
+      collateralProvider = dealer; cashProvider = mmf; riskDesk
+      isin = "US-T-2030"; nominal = 100000000.0
+      cashAmount = 98000000.0; currency = "USD"
+      annualRate = 0.045; termMinutes = 240
+      haircutPct = 0.02
+
+  debug ("DEMO_DEALER="   <> show dealer)
+  debug ("DEMO_MMF="      <> show mmf)
+  debug ("DEMO_RISKDESK=" <> show riskDesk)
+  pure ()

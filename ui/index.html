@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Two-Leg Repo — Ledger View</title>
+<style>
+  :root{
+    --bg:#0b0d12; --panel:#12151d; --panel2:#161a24; --border:rgba(255,255,255,.10);
+    --border2:rgba(255,255,255,.18); --text:#e8eaf0; --muted:#9aa0b4; --faint:#6b7185;
+    --dealer:#8b7bff; --mmf:#2fd3e6; --risk:#ffb454; --green:#46e5a0; --pink:#ff6b93;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);line-height:1.5;min-height:100vh;
+    background-image:radial-gradient(60% 50% at 15% -5%,rgba(139,123,255,.14),transparent 60%),
+      radial-gradient(50% 45% at 90% 0%,rgba(47,211,230,.10),transparent 60%)}
+  .wrap{max-width:1040px;margin:0 auto;padding:26px 22px 80px}
+  header h1{margin:0 0 4px;font-size:1.5rem;letter-spacing:-.02em}
+  header p{margin:0;color:var(--muted);font-size:.95rem;max-width:72ch}
+  .live{display:inline-flex;align-items:center;gap:6px;font:600 .72rem/1 var(--mono);color:var(--green);
+    text-transform:uppercase;letter-spacing:.08em;margin-left:10px;vertical-align:middle}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(70,229,160,.5)}70%{box-shadow:0 0 0 7px rgba(70,229,160,0)}100%{box-shadow:0 0 0 0 rgba(70,229,160,0)}}
+
+  .tabs{display:flex;gap:10px;margin:22px 0 8px;flex-wrap:wrap}
+  .tab{flex:1;min-width:190px;text-align:left;cursor:pointer;background:var(--panel);border:1px solid var(--border);
+    border-radius:14px;padding:14px 16px;transition:.15s;color:inherit}
+  .tab:hover{border-color:var(--border2);background:var(--panel2)}
+  .tab .role{font-weight:700;font-size:1.05rem;display:flex;align-items:center;gap:8px}
+  .tab .sub{color:var(--muted);font-size:.82rem;margin-top:2px}
+  .tab .swatch{width:10px;height:10px;border-radius:3px;flex:none}
+  .tab.active{border-color:var(--accent,#8b7bff);box-shadow:0 0 0 1px var(--accent,#8b7bff),0 12px 30px -16px var(--accent,#8b7bff)}
+  .tab[data-role=Dealer]{--accent:var(--dealer)} .tab[data-role=MMF]{--accent:var(--mmf)} .tab[data-role=RiskDesk]{--accent:var(--risk)}
+  .tab[data-role=Dealer] .swatch{background:var(--dealer)} .tab[data-role=MMF] .swatch{background:var(--mmf)} .tab[data-role=RiskDesk] .swatch{background:var(--risk)}
+
+  .viewbar{display:flex;align-items:center;gap:10px;margin:16px 0 4px;color:var(--muted);font-size:.86rem;flex-wrap:wrap}
+  .viewbar b{color:var(--text)} .pid{font-family:var(--mono);font-size:.72rem;color:var(--faint);word-break:break-all}
+  .note{color:var(--faint);font-size:.82rem;margin:2px 0 10px}
+  .gatebar{display:flex;align-items:center;gap:10px;margin:0 0 18px;flex-wrap:wrap;font-size:.82rem;color:var(--muted)}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+  .card{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--edge,var(--border2));
+    border-radius:12px;padding:14px 16px;display:flex;flex-direction:column}
+  .card h3{margin:0 0 2px;font-size:.7rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-family:var(--mono)}
+  .card .headline{font-size:1.15rem;font-weight:700;letter-spacing:-.01em;margin:0 0 8px}
+  .row{display:flex;justify-content:space-between;gap:12px;font-size:.88rem;padding:2px 0}
+  .row .k{color:var(--muted)} .row .v{font-family:var(--mono);text-align:right}
+  .badge{display:inline-block;font:600 .68rem/1 var(--mono);text-transform:uppercase;letter-spacing:.06em;
+    padding:4px 8px;border-radius:999px;margin-top:10px;align-self:flex-start}
+  .owned{color:var(--green);background:rgba(70,229,160,.12);border:1px solid rgba(70,229,160,.3)}
+  .observing{color:var(--risk);background:rgba(255,180,84,.10);border:1px solid rgba(255,180,84,.28)}
+  .party-of{color:var(--mmf);background:rgba(47,211,230,.10);border:1px solid rgba(47,211,230,.28)}
+  .card[data-t=Bond]{--edge:var(--dealer)} .card[data-t=Cash]{--edge:var(--mmf)}
+  .card[data-t=RepoProposal]{--edge:var(--risk)} .card[data-t=RepoAgreement]{--edge:var(--green)} .card[data-t=EligibilityCriteria]{--edge:var(--faint)}
+
+  .btn{cursor:pointer;font:600 .82rem/1 var(--font);border-radius:9px;padding:9px 13px;border:1px solid var(--border2);
+    background:var(--panel2);color:var(--text);transition:.15s}
+  .btn:hover{transform:translateY(-1px)} .btn:disabled{opacity:.5;cursor:default;transform:none}
+  .btn.go{margin-top:12px;background:linear-gradient(100deg,var(--dealer),var(--mmf));border:none;color:#0b0d12;align-self:flex-start}
+  .btn.close{margin-top:12px;background:var(--green);border:none;color:#08130d;align-self:flex-start}
+  .btn.danger{background:transparent;border-color:rgba(255,107,147,.4);color:var(--pink)}
+  .hint{color:var(--faint);font-size:.76rem;margin-top:6px}
+  .empty{color:var(--faint);font-size:.9rem;padding:26px;border:1px dashed var(--border);border-radius:12px;text-align:center}
+
+  #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(30px);opacity:0;pointer-events:none;
+    max-width:640px;padding:12px 18px;border-radius:12px;font-size:.9rem;transition:.25s;box-shadow:0 20px 50px -20px #000;z-index:9}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  #toast.ok{background:rgba(70,229,160,.14);border:1px solid rgba(70,229,160,.5);color:#c9ffe8}
+  #toast.err{background:rgba(255,107,147,.14);border:1px solid rgba(255,107,147,.5);color:#ffd7e2}
+  #toast.info{background:var(--panel2);border:1px solid var(--border2);color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Two-Leg Repo — Ledger View <span class="live"><span class="dot"></span>live</span></h1>
+    <p>The same repo trade, seen from each party's own vantage point. Drive it from the party that controls each step —
+       and watch the assets move, atomically, in real time. The ledger shows every party
+       <strong>only what it is entitled to see</strong>.</p>
+  </header>
+
+  <div class="tabs" id="tabs"></div>
+
+  <div class="viewbar">Viewing as <b id="roleName">—</b><span class="pid" id="pid"></span></div>
+  <div class="note" id="roleNote"></div>
+  <div class="gatebar">
+    <span>Pre-commit gate:</span>
+    <button class="btn danger" onclick="rejectDemo()">Attempt ineligible collateral →</button>
+    <span class="hint">creates a non-compliant proposal and tries to accept it — the ledger refuses before anything commits</span>
+  </div>
+
+  <div class="grid" id="grid"><div class="empty">Loading…</div></div>
+</div>
+<div id="toast"></div>
+
+<script>
+const ROLE_SUB = {
+  Dealer:  'Collateral provider — gives the bond, takes the cash',
+  MMF:     'Cash provider — lends cash against collateral',
+  RiskDesk:'Risk desk — owns eligibility &amp; haircut policy',
+};
+const ROLE_NOTE = {
+  Dealer:  'You own the bond and the proposal. When the repo is live you can <b>close</b> it — repaying principal plus minute-priced interest.',
+  MMF:     'You own the cash and control acceptance. <b>Accept</b> the proposal and the bond moves to you, the cash to the dealer — one atomic step.',
+  RiskDesk:'You own the eligibility policy and oversee the trade as registrar/issuer — you see the assets but hold neither.',
+};
+const usd = new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0});
+const tShort = tid => (tid||'').split(':').slice(-1)[0];
+
+let CFG=null, current=null, timer=null, STATE=null, NAMES={};
+
+async function boot(){
+  CFG = await (await fetch('/api/config')).json();
+  NAMES = Object.fromEntries(Object.entries(CFG.parties||{}).map(([r,p])=>[p,r]));
+  document.getElementById('tabs').innerHTML = CFG.roles.map(r=>`
+    <button class="tab" data-role="${r}" onclick="select('${r}')">
+      <div class="role"><span class="swatch"></span>${r}</div>
+      <div class="sub">${ROLE_SUB[r]||''}</div>
+    </button>`).join('');
+  select(CFG.roles[0]);
+}
+
+function select(role){
+  current=role;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.role===role));
+  document.getElementById('roleName').textContent=role;
+  document.getElementById('roleNote').innerHTML=ROLE_NOTE[role]||'';
+  refresh();
+  if(timer) clearInterval(timer);
+  timer=setInterval(refresh,2000);
+}
+
+async function refresh(){
+  const role=current;
+  let json;
+  try{ json = await (await fetch('/api/holdings?party='+encodeURIComponent(role))).json(); }
+  catch(e){ return show(`<div class="empty">fetch failed: ${e}</div>`); }
+  if(role!==current) return;
+  STATE=json;
+  document.getElementById('pid').textContent = json.party;
+  if(json.error) return show(`<div class="empty">${json.error}</div>`);
+  render(json, role);
+}
+
+function render(json, role){
+  const me=json.party;
+  const order=['RepoAgreement','RepoProposal','Cash','Bond','EligibilityCriteria'];
+  const cs=(json.result||[]).slice().sort((a,b)=>order.indexOf(tShort(a.templateId))-order.indexOf(tShort(b.templateId)));
+  if(!cs.length) return show('<div class="empty">No visible contracts for this party.</div>');
+  show(cs.map(c=>card(c,me,role)).join(''));
+}
+
+function ownedBadge(o){ return o?'<span class="badge owned">✓ owned</span>':'<span class="badge observing">👁 observing (disclosed)</span>'; }
+function row(k,v){ return `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`; }
+function roleOf(pid,me){ return pid===me?'you':(NAMES[pid]||pid); }
+function partyRole(p,me){
+  if(p.collateralProvider===me) return 'you: collateral provider';
+  if(p.cashProvider===me) return 'you: cash provider';
+  if(p.riskDesk===me) return 'you: risk desk';
+  return 'counterparty';
+}
+
+function card(c,me,role){
+  const t=tShort(c.templateId), p=c.payload, cid=c.contractId;
+  let head='', body='', badge='', action='';
+  if(t==='Cash'){
+    head='Cash'; body=row('Amount',usd.format(+p.amount)+' '+p.currency)+row('Owner',roleOf(p.owner,me))+row('Issuer','RiskDesk');
+    badge=ownedBadge(p.owner===me);
+  }else if(t==='Bond'){
+    head='Bond · collateral'; body=row('ISIN',p.isin)+row('Face value',usd.format(+p.faceValue))+row('Owner',roleOf(p.owner,me))+row('Registrar','RiskDesk');
+    badge=ownedBadge(p.owner===me);
+  }else if(t==='RepoProposal'){
+    head='Repo proposal · OPEN';
+    body=row('Collateral',p.isin+' · '+usd.format(+p.nominal))+row('Cash',usd.format(+p.cashAmount)+' '+p.currency)
+        +row('Rate',(+p.annualRate*100).toFixed(2)+'% p.a.')+row('Haircut',(+p.haircutPct*100).toFixed(1)+'%')+row('Term',p.termMinutes+' min');
+    badge=`<span class="badge party-of">${partyRole(p,me)}</span>`;
+    if(role==='MMF') action=`<button class="btn go" onclick="acceptRepo('${cid}')">Accept repo →</button><div class="hint">exercises RepoAccept — the eligibility &amp; haircut gate runs before anything commits</div>`;
+  }else if(t==='RepoAgreement'){
+    head='Repo agreement · ACTIVE';
+    body=row('Collateral',p.isin)+row('Cash',usd.format(+p.cashAmount)+' '+p.currency)+row('Rate',(+p.annualRate*100).toFixed(2)+'% p.a.')+row('Term',p.termMinutes+' min');
+    badge=`<span class="badge party-of">${partyRole(p,me)}</span>`;
+    if(role==='Dealer') action=`<button class="btn close" onclick="closeRepo('${cid}')">Close repo →</button><div class="hint">repays principal + minute-priced interest; bond returns to you</div>`;
+  }else if(t==='EligibilityCriteria'){
+    head='Eligibility policy'; body=row('Eligible ISINs',(p.eligibleIsins||[]).join(', '))+row('Min haircut',(+p.minHaircutPct*100).toFixed(1)+'%')+row('Owner','RiskDesk');
+    badge=ownedBadge(p.riskDesk===me);
+  }else{ head=t; body=row('payload',JSON.stringify(p)); }
+  return `<div class="card" data-t="${t}"><h3>${t}</h3><div class="headline">${head}</div>${body}${badge}${action}</div>`;
+}
+
+// ---- actions ----
+async function api(path,body){ const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); return r.json(); }
+function find(t,pred){ return (STATE.result||[]).find(c=>tShort(c.templateId)===t && (!pred||pred(c.payload))); }
+function num(n){ return n.toFixed(4); }
+
+async function acceptRepo(propCid){
+  const ids=CFG.parties;
+  const bond=find('Bond',x=>x.owner===ids.Dealer), cash=find('Cash',x=>x.owner===ids.MMF), elig=find('EligibilityCriteria');
+  if(!bond||!cash||!elig) return toast('Cannot find bond/cash/eligibility in this view.','err');
+  toast('Submitting RepoAccept…','info');
+  const r=await api('/api/exercise',{party:'MMF',templateId:'Repo:RepoProposal',contractId:propCid,choice:'RepoAccept',
+    argument:{bondCid:bond.contractId,cashCid:cash.contractId,eligibilityCid:elig.contractId}});
+  if(r.errors) return toast('Rejected: '+fmtErr(r.errors),'err');
+  toast('✓ Accepted — bond moved Dealer → MMF, cash MMF → Dealer, atomically.','ok');
+  refresh();
+}
+
+async function closeRepo(agrCid){
+  const ids=CFG.parties;
+  const a=find('RepoAgreement',null); const p=a?a.payload:null;
+  if(!p) return toast('agreement not found','err');
+  const owed=(+p.cashAmount)*(1+(+p.annualRate)*(+p.termMinutes)/525600);
+  const repay=Math.ceil(owed*100)/100;                    // >= owed, to the cent
+  toast('Creating repayment cash + submitting RepoClose…','info');
+  const c=await api('/api/create',{party:'Dealer',templateId:'Assets:Cash',
+    payload:{issuer:ids.RiskDesk,owner:ids.Dealer,currency:p.currency,amount:num(repay),disclosedTo:[]}});
+  if(c.errors) return toast('repayment create failed: '+fmtErr(c.errors),'err');
+  const r=await api('/api/exercise',{party:'Dealer',templateId:'Repo:RepoAgreement',contractId:agrCid,choice:'RepoClose',
+    argument:{repaymentCashCid:c.result.contractId}});
+  if(r.errors) return toast('Close rejected: '+fmtErr(r.errors),'err');
+  const interest=repay-(+p.cashAmount);
+  toast('✓ Repo closed — bond returned to Dealer; MMF earned ≈'+usd.format(interest)+' minute-priced interest.','ok');
+  refresh();
+}
+
+async function rejectDemo(){
+  const ids=CFG.parties;
+  toast('Building a non-compliant repo (ineligible ISIN) and trying to accept…','info');
+  const bond=await api('/api/create',{party:'Dealer',templateId:'Assets:Bond',
+    payload:{registrar:ids.RiskDesk,owner:ids.Dealer,isin:'XS-TOKENIZED-RE-SPV',faceValue:num(100000000),disclosedTo:[ids.MMF]}});
+  const cash=await api('/api/create',{party:'MMF',templateId:'Assets:Cash',
+    payload:{issuer:ids.RiskDesk,owner:ids.MMF,currency:'USD',amount:num(98000000),disclosedTo:[]}});
+  const prop=await api('/api/create',{party:'Dealer',templateId:'Repo:RepoProposal',
+    payload:{collateralProvider:ids.Dealer,cashProvider:ids.MMF,riskDesk:ids.RiskDesk,isin:'XS-TOKENIZED-RE-SPV',
+      nominal:num(100000000),cashAmount:num(98000000),currency:'USD',annualRate:num(0.045),termMinutes:240,haircutPct:num(0.02)}});
+  const h=await (await fetch('/api/holdings?party=MMF')).json();
+  const elig=(h.result||[]).find(c=>tShort(c.templateId)==='EligibilityCriteria');
+  const r=await api('/api/exercise',{party:'MMF',templateId:'Repo:RepoProposal',contractId:prop.result.contractId,choice:'RepoAccept',
+    argument:{bondCid:bond.result.contractId,cashCid:cash.result.contractId,eligibilityCid:elig.contractId}});
+  if(r.errors) toast('⛔ REJECTED pre-commit: “'+fmtErr(r.errors)+'” — the open leg never happened, no state changed.','err');
+  else toast('Unexpected: the accept succeeded.','err');
+  // clean up the throwaway contracts so the demo stays repeatable
+  archive('Dealer','Repo:RepoProposal',prop.result&&prop.result.contractId);
+  archive('Dealer','Assets:Bond',bond.result&&bond.result.contractId);
+  archive('MMF','Assets:Cash',cash.result&&cash.result.contractId);
+  setTimeout(refresh,600);
+}
+async function archive(party,templateId,cid){ if(!cid) return; try{ await api('/api/exercise',{party,templateId,contractId:cid,choice:'Archive',argument:{}}); }catch(e){} }
+
+function fmtErr(errs){
+  const s=Array.isArray(errs)?errs.join(' '):String(errs);
+  const known=s.match(/collateral ISIN not eligible|cash amount exceeds collateral value less haircut|haircut below risk-desk floor|eligibility list must come from the agreed risk desk|bond must be owned by collateral provider|cash must be owned by cash provider|repurchase price not met[^"]*/);
+  if(known) return known[0];
+  const m=s.match(/[Mm]essage[:=\s"']+([^"'\\]{5,120})/); if(m) return m[1].trim();
+  return s.slice(0,150);
+}
+
+let toastTimer=null;
+function toast(msg,kind){
+  const el=document.getElementById('toast');
+  el.className=kind+' show'; el.innerHTML=msg;
+  if(toastTimer) clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>{el.className=el.className.replace('show','').trim();}, kind==='info'?4000:7000);
+}
+function show(html){ document.getElementById('grid').innerHTML=html; }
+
+boot();
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "ledgerId": "sandbox",
+  "pkg": "7f9a32131a4ca47040f1d172f5149cdcc531d5ec38c049b142870b96a964ee22",
+  "parties": {
+    "Dealer": "party-56709caa-ae88-4942-a7ee-37146e5d9aa4::1220b8a5e0c273ececf55e675efd816ad99e19dadb888aa2a264cf4b3ae0979902e1",
+    "MMF": "party-90cacf53-de84-429b-8750-f65fea795132::1220b8a5e0c273ececf55e675efd816ad99e19dadb888aa2a264cf4b3ae0979902e1",
+    "RiskDesk": "party-2443bd04-71fb-4014-824a-3211e23a394e::1220b8a5e0c273ececf55e675efd816ad99e19dadb888aa2a264cf4b3ae0979902e1"
+  }
+}
