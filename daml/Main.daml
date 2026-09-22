@@ -10,9 +10,9 @@ import Dvp
 import Repo
 
 data Parties = Parties with
-  dealer : Party      -- collateral provider / bond seller
-  mmf : Party         -- cash provider / bond buyer
-  riskDesk : Party
+  dealer : Party      -- Dealer: collateral provider / bond seller
+  mmf : Party         -- Money Market Fund: cash provider / bond buyer
+  riskDesk : Party    -- Risk Desk: policy gate; in this lab also cash issuer and bond registrar
 
 allocateParties : Script Parties
 allocateParties = do
@@ -23,9 +23,8 @@ allocateParties = do
 
 -- Atomic DvP: bond against cash in one transaction. Note the explicit
 -- disclosure: the seller can only settle against cash he has been shown.
-testDvp : Script ()
-testDvp = do
-  Parties{..} <- allocateParties
+dvpWith : Parties -> Script ()
+dvpWith Parties{..} = do
   cashCid <- submit mmf do
     createCmd Cash with
       issuer = riskDesk; owner = mmf; currency = "USD"; amount = 98.0
@@ -45,10 +44,12 @@ testDvp = do
   buyerBond.owner === mmf
   debug "DvP settled atomically: both legs moved in one transaction."
 
+testDvp : Script ()
+testDvp = allocateParties >>= dvpWith
+
 -- Two-leg repo: open leg, then close leg with interest priced to the minute.
-testRepoHappyPath : Script ()
-testRepoHappyPath = do
-  Parties{..} <- allocateParties
+repoHappyPathWith : Parties -> Script ()
+repoHappyPathWith Parties{..} = do
   eligibilityCid <- submit riskDesk do
     createCmd EligibilityCriteria with
       riskDesk; eligibleIsins = ["US-T-2030", "DE-BUND-2032"]
@@ -87,10 +88,12 @@ testRepoHappyPath = do
   cashBack.owner === mmf
   debug "Repo closed: collateral returned, cash provider earned minute-priced interest."
 
+testRepoHappyPath : Script ()
+testRepoHappyPath = allocateParties >>= repoHappyPathWith
+
 -- PRE-COMMIT GATE: ineligible collateral aborts before anything commits.
-testRepoRejectsIneligibleCollateral : Script ()
-testRepoRejectsIneligibleCollateral = do
-  Parties{..} <- allocateParties
+repoRejectsIneligibleCollateralWith : Parties -> Script ()
+repoRejectsIneligibleCollateralWith Parties{..} = do
   eligibilityCid <- submit riskDesk do
     createCmd EligibilityCriteria with
       riskDesk; eligibleIsins = ["US-T-2030"]
@@ -114,10 +117,12 @@ testRepoRejectsIneligibleCollateral = do
     exerciseCmd propCid RepoAccept with bondCid; cashCid; eligibilityCid
   debug "Ineligible collateral rejected pre-commit: no failed trade to clean up."
 
+testRepoRejectsIneligibleCollateral : Script ()
+testRepoRejectsIneligibleCollateral = allocateParties >>= repoRejectsIneligibleCollateralWith
+
 -- PRE-COMMIT GATE: breached haircut aborts the open leg.
-testRepoRejectsBreachedHaircut : Script ()
-testRepoRejectsBreachedHaircut = do
-  Parties{..} <- allocateParties
+repoRejectsBreachedHaircutWith : Parties -> Script ()
+repoRejectsBreachedHaircutWith Parties{..} = do
   eligibilityCid <- submit riskDesk do
     createCmd EligibilityCriteria with
       riskDesk; eligibleIsins = ["US-T-2030"]
@@ -142,10 +147,24 @@ testRepoRejectsBreachedHaircut = do
     exerciseCmd propCid RepoAccept with bondCid; cashCid; eligibilityCid
   debug "Haircut floor enforced pre-commit."
 
--- init-script for `daml start`
+testRepoRejectsBreachedHaircut : Script ()
+testRepoRejectsBreachedHaircut = allocateParties >>= repoRejectsBreachedHaircutWith
+
+-- init-script for `daml start`: one shared set of parties, plus participant
+-- users so Navigator's login dropdown has something to offer. Test scripts
+-- don't need users; interactive tools authenticate via the user management
+-- API, so without these three `daml start` would greet you with an empty
+-- role picker.
 setup : Script ()
 setup = do
-  testDvp
-  testRepoHappyPath
-  testRepoRejectsIneligibleCollateral
-  testRepoRejectsBreachedHaircut
+  parties@Parties{..} <- allocateParties
+  dealerU <- validateUserId "dealer"
+  mmfU <- validateUserId "mmf"
+  riskU <- validateUserId "riskdesk"
+  createUser (User dealerU (Some dealer)) [CanActAs dealer]
+  createUser (User mmfU (Some mmf)) [CanActAs mmf]
+  createUser (User riskU (Some riskDesk)) [CanActAs riskDesk]
+  dvpWith parties
+  repoHappyPathWith parties
+  repoRejectsIneligibleCollateralWith parties
+  repoRejectsBreachedHaircutWith parties

@@ -4,34 +4,102 @@ A weekend-sized Daml project: atomic DvP, a two-leg repo with minute-priced
 interest, a pre-commit eligibility gate and a haircut floor. Built to back a
 claim with code rather than assurances.
 
+## Quickstart (about 5 minutes)
+
+You need JDK 17+ and the Daml SDK. This installs the exact SDK version the
+project pins (2.10.4):
+
+```
+curl -sSL https://get.daml.com/ | sh -s 2.10.4
+```
+
+Then:
+
+```
+git clone https://github.com/ThomasFelber/daml-two-leg-repo.git
+cd daml-two-leg-repo
+daml test
+```
+
+The first run downloads dependencies and takes a minute; after that it is
+seconds. Success looks like this — six `ok` lines at the top (order varies),
+followed by a long test-coverage report you can ignore:
+
+```
+Test Summary
+
+daml/Main.daml:allocateParties: ok, 0 active contracts, 0 transactions.
+daml/Main.daml:testDvp: ok, 2 active contracts, 4 transactions.
+daml/Main.daml:testRepoRejectsBreachedHaircut: ok, 4 active contracts, 5 transactions.
+daml/Main.daml:testRepoRejectsIneligibleCollateral: ok, 4 active contracts, 5 transactions.
+daml/Main.daml:testRepoHappyPath: ok, 4 active contracts, 7 transactions.
+daml/Main.daml:setup: ok, 14 active contracts, 21 transactions.
+```
+
+Two things in that output would otherwise look wrong:
+
+- **`ok` on the two `Rejects…` scripts means the rejection happened.** They
+  assert with `submitMustFail`: an ineligible ISIN or a breached haircut must
+  abort *before* anything commits. The failure is the feature under test.
+- **Six lines, not four.** `daml test` runs every top-level `Script` value,
+  so `allocateParties` (a helper) and `setup` (the `daml start` init script,
+  which replays all four scenarios) are counted too.
+
+## See the privacy model (about 2 minutes)
+
+The point of this project is *who may see what*, and you can click through
+that instead of taking my word for it:
+
+```
+daml start    # sandbox + Navigator on http://localhost:7500, runs Main:setup
+```
+
+Log in as one user at a time — `dealer`, `mmf`, `riskdesk` — and open the
+*Contracts* view. After `setup` the ledger holds 14 active contracts, and
+each login sees a different subset:
+
+- **Dealer** (login `dealer`) — the collateral provider, think a bank's
+  repo desk — sees 10: its bonds and cash, the two open repo proposals,
+  and the risk desk's eligibility lists — but not the fund's undisclosed
+  cash.
+- **Money Market Fund** (login `mmf`) — the cash provider and DvP bond
+  buyer — sees 11: its own cash and bonds, plus the same proposals and
+  criteria — but not the dealer's other holdings.
+- **Risk Desk** (login `riskdesk`) — three roles in one party: policy
+  gate, cash issuer, bond registrar — sees all 14. *Not* because it is an
+  admin, but because each of those roles is written into the contracts:
+  signatory on the criteria, issuer/registrar observer on every asset,
+  gate on every proposal.
+
+That last line is the point: there is no "view everything" flag anywhere.
+Visibility follows contractual role — change the roles and the view
+changes; there is no other knob. The same picture per scenario, with
+less clicking: run `daml studio`, open [daml/Main.daml](daml/Main.daml) and
+click *Script results* above any test — the table view has a visibility
+column per party (X vs –).
+
 ## What it does
 
-- **`Assets.daml`**: minimal `Cash` and `Bond` templates with explicit
-  disclosure (`disclosedTo`), because on this ledger model nothing is visible
-  by default.
-- **`Dvp.daml`**: delivery versus payment as one atomic transaction via
-  propose-accept. Both legs move or neither does; there is no half-settled
-  state to reconcile afterwards.
-- **`Repo.daml`**: a two-leg repo. The open leg swaps bond against cash
-  atomically; the close leg returns principal plus interest priced to the
-  minute (a 4-hour repo pays 4 hours of interest, not a day). The close leg
-  exists as an enforceable contract state from the moment the repo opens,
-  which is precisely the property that makes intraday repo tradable.
-- **Pre-commit policy gate**: eligibility (ISIN whitelist) and a haircut floor
-  are checked by a risk desk's reference data BEFORE anything commits. An
-  ineligible ISIN or a breached haircut aborts the whole transaction: there is
-  no failed trade to clean up, because the trade never existed.
-- **`Main.daml`**: four scripts: DvP happy path, repo happy path, and two
-  pre-commit rejections.
+Read the code in this order — four files, 348 lines, about 20 minutes:
 
-## Run it
-
-```
-daml test     # runs all four scripts
-daml start    # sandbox + Navigator, runs Main:setup
-```
-
-Built against Daml SDK 2.10.4 (JDK 17).
+1. [`daml/Assets.daml`](daml/Assets.daml): minimal `Cash` and `Bond`
+   templates with explicit disclosure (`disclosedTo`), because on this ledger
+   model nothing is visible by default.
+2. [`daml/Dvp.daml`](daml/Dvp.daml): delivery versus payment as one atomic
+   transaction via propose-accept. Both legs move or neither does; there is
+   no half-settled state to reconcile afterwards.
+3. [`daml/Repo.daml`](daml/Repo.daml): a two-leg repo. The open leg swaps
+   bond against cash atomically; the close leg returns principal plus
+   interest priced to the minute (a 4-hour repo pays 4 hours of interest,
+   not a day). The close leg exists as an enforceable contract state from
+   the moment the repo opens, which is precisely the property that makes
+   intraday repo tradable. The open leg is guarded by a **pre-commit policy
+   gate**: eligibility (ISIN whitelist) and a haircut floor are checked
+   against the risk desk's reference data BEFORE anything commits. An
+   ineligible ISIN or a breached haircut aborts the whole transaction: there
+   is no failed trade to clean up, because the trade never existed.
+4. [`daml/Main.daml`](daml/Main.daml): four scripts — DvP happy path, repo
+   happy path, and the two pre-commit rejections.
 
 ## Three things that struck me while building it
 
